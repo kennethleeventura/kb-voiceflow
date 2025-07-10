@@ -8,7 +8,14 @@ module.exports = {
     '**/*.js',
     '!**/node_modules/**',
     '!**/coverage/**',
-    '!jest.config.cjs'
+    '!jest.config.cjs',
+    '!babel.config.cjs'
   ],
-  verbose: true
+  verbose: true,
+  transform: {
+    '^.+\\.js$': 'babel-jest'
+  },
+  transformIgnorePatterns: [
+    'node_modules/(?!(.*\\.mjs$))'
+  ]
 };

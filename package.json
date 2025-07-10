@@ -27,7 +27,10 @@
     "sitemap-xml-parser": "^0.0.2"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-env": "^7.28.0",
     "@jest/globals": "^30.0.4",
+    "babel-jest": "^30.0.4",
     "jest": "^30.0.4",
     "supertest": "^7.1.3"
   }
