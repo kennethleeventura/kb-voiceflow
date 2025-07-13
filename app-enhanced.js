@@ -47,6 +47,7 @@ import collectionsRouter, { initializeCollectionRoutes } from './src/routes/coll
 import batchRouter, { initializeBatchRoutes } from './src/routes/batch.js'
 import healthRouter, { initializeHealthRoutes } from './src/routes/health.js'
 import reviewsRouter from './src/routes/reviews.js'
+import chatRouter, { initializeChatRoutes } from './src/routes/chat.js'
 
 /* Utility Functions */
 import { getFileType, getUrlFilename, cleanFilePath } from './src/utils/fileUtils.js'
@@ -112,6 +113,9 @@ app.use('/api/', limiter)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use(express.json({ limit: '10mb' }))
 
+/* Static Files */
+app.use(express.static('public'))
+
 /* Request Logging Middleware */
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString()
@@ -122,11 +126,21 @@ app.use((req, res, next) => {
 /* Enhanced Routes */
 app.use('/api/collections', initializeCollectionRoutes(client))
 app.use('/api/batch', initializeBatchRoutes(addURL, parseSitemap))
-app.use('/api/health', initializeHealthRoutes({ 
-  redis: clientRedis, 
-  opensearch: client 
+app.use('/api/health', initializeHealthRoutes({
+  redis: clientRedis,
+  opensearch: client
 }))
 app.use('/api/reviews', reviewsRouter)
+app.use('/api/chat', initializeChatRoutes(handleQuestion, addURL))
+
+/* Chat Interface Route */
+app.get('/chat', (req, res) => {
+  res.sendFile('chat.html', { root: 'public' })
+})
+
+app.get('/', (req, res) => {
+  res.redirect('/chat')
+})
 
 /* Legacy Endpoints (Enhanced with Validation) */
 
@@ -468,6 +482,72 @@ server.listen(PORT, () => {
 })
 
 /* Utility Functions (Legacy Support) */
+
+/* Question handler for chat service */
+async function handleQuestion({ question, collection = process.env.OPENSEARCH_DEFAULT_INDEX, model = 'gpt-3.5-turbo', k = 3, temperature = 0, max_tokens = 400 }) {
+  const encodedCollection = await sanitize(collection)
+
+  const llm = new OpenAI({
+    modelName: model,
+    concurrency: 15,
+    cache,
+    temperature: temperature,
+    maxTokens: max_tokens,
+  })
+
+  let vectorStore
+  try {
+    vectorStore = await OpenSearchVectorStore.fromExistingIndex(
+      new OpenAIEmbeddings(),
+      {
+        client,
+        indexName: encodedCollection,
+      }
+    )
+  } catch (err) {
+    console.info(`Collection ${collection} does not exist.`)
+  }
+
+  if (vectorStore) {
+    console.log('🔍 Using Vector Store for context')
+    const chain = VectorDBQAChain.fromLLM(llm, vectorStore, {
+      k: k,
+      returnSourceDocuments: true,
+    })
+    const response = await chain.call({ query: question })
+
+    // Get the sources from the response
+    let sources = response.sourceDocuments
+    sources = sources.map((source) => source.metadata.source)
+    // Remove duplicates
+    sources = [...new Set(sources)]
+
+    return {
+      response: response.text,
+      sources,
+      collection: collection,
+      model: model
+    }
+  } else {
+    console.log('💭 No vector store found, using general knowledge')
+    const template =
+      "You are a helpful AI Assistant. Try to answer the following question: {question} If you don't know the answer, just say \"I'm not sure about that.\" Don't try to make up an answer."
+    const prompt = new PromptTemplate({
+      template: template,
+      inputVariables: ['question'],
+    })
+    const chain = new LLMChain({ llm: llm, prompt: prompt })
+    const response = await chain.call({ question: question })
+
+    return {
+      response: cleanText(response.text),
+      sources: [],
+      collection: null,
+      model: model
+    }
+  }
+}
+
 async function addURL(url, encodedCollection, chunkSize, chunkOverlap) {
   const loader = new CheerioWebBaseLoader(url)
   const docs = await loader.load()
